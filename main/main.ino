@@ -1,37 +1,99 @@
-// ---------------------------------------------------------------- //
-// Arduino Ultrasoninc Sensor HC-SR04
-// Re-writed by Arbi Abdul Jabbaar
-// Using Arduino IDE 1.8.7
-// Using HC-SR04 Module
-// Tested on 17 September 2019
-// ---------------------------------------------------------------- //
+//library to communicate with ethernet shield
+#include <SPI.h>
+//library to connect to internet
+#include <Ethernet.h>
 
-#define echoPin 2 // attach pin D2 Arduino to pin Echo of HC-SR04
-#define trigPin 3 //attach pin D3 Arduino to pin Trig of HC-SR04
-
-// defines variables
-long duration; // variable for the duration of sound wave travel
-int distance; // variable for the distance measurement
+//stores trigger pin position
+int triggerPin = 2;
+//stores echo pin position
+int echoPin = 3;
+int time;
+int distance;
+//server that Arduino will use
+char serverName[] = "covid-mask-detector.herokuapp.com";
+//mac address for ethernet shield
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+//creates Ethernet client
+EthernetClient twilioClient;
+String answer;
 
 void setup() {
-  pinMode(trigPin, OUTPUT); // Sets the trigPin as an OUTPUT
-  pinMode(echoPin, INPUT); // Sets the echoPin as an INPUT
-  Serial.begin(9600); // // Serial Communication is starting with 9600 of baudrate speed
+  
+  Serial.begin(9600);
+  //if Ethernet is not configured, theprogram does not continue
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet");
+    while(true);
+  }
+  else {
+    Serial.println("Arduino connected to Internet");
+  }
+  pinMode(triggerPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
 }
+
 void loop() {
-  // Clears the trigPin condition
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  // Reads the echoPin, returns the sound wave travel time in microseconds
-  duration = pulseIn(echoPin, HIGH);
-  // Calculating the distance
-  distance = duration * 0.034 / 2; // Speed of sound wave divided by 2 (go and back)
-  // Displays the distance on the Serial Monitor
-  Serial.print("Distance: ");
-  Serial.print(distance);
-  Serial.println(" cm");
+  
+  digitalWrite(triggerPin, HIGH);
+  delay(1);
+  digitalWrite(triggerPin, LOW);
+  time = pulseIn(echoPin, HIGH);
+  distance = (time * 0.034) / 2;
+
+  if(distance <=10) {
+    sendSMS();
+  }
+}
+
+void sendSMS()
+{
+  //check if Arduino can open connection to theserver
+  if (twilioClient.connect(serverName, 80)) {
+    Serial.println("Sending text message...");
+    //call to /sendsms endpoint, this will send the sms to the user
+    twilioClient.println("GET /sendsms HTTP/1.1");
+    twilioClient.println("Host: covid-mask-detector.herokuapp.com");
+    twilioClient.println("Connection: close");
+    twilioClient.println();
+    twilioClient.stop();
+    Serial.println("Text message sent.");
+    //stop program for two minutes
+    delay(120000);
+    //get user reply
+    getSMS();
+  }
+}
+
+void getSMS()
+{ 
+  //check if Arduino can open connection to theserver
+  if (twilioClient.connect(serverName, 80)) {
+    Serial.println("Getting SMS...");
+    //call to /readsms endpoint, this will return the body of the SMS that the user has sent
+    twilioClient.println("GET /readsms HTTP/1.1");
+    twilioClient.println("Host: covid-mask-detector.herokuapp.com");
+    twilioClient.println("Connection: close");
+    twilioClient.println();
+    //wait to start reading data
+    while(twilioClient.connected() && !twilioClient.available()) delay(1);
+    //while data is available, keep reading data
+    while (twilioClient.connected() || twilioClient.available()) {
+          //serverCall stores the data fetched from the endpoint
+          char serverCall = twilioClient.read();
+          answer += serverCall;
+    }
+    //stop running the Ethernet client
+    twilioClient.stop();
+    //if the reply from the user is equal to yes, stop the program
+    if(answer.indexOf("Yes") > 0) {
+      Serial.println("You are wearing a mask!");
+    }
+    //if the reply from the user is not equal to yes, send SMS again
+    else {
+      Serial.println("You are not wearing a mask. Repeating...");
+      sendSMS();
+    }
+    
+  }
 }
